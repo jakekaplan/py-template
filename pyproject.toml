@@ -17,6 +17,7 @@ dev = [
   "ruff",
   "ty",
   "prek",
+  "loq>=0.1.0a7",
 ]
 
 [tool.hatch.version]
