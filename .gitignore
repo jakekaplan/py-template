@@ -1,8 +1,13 @@
-# Python
+# Python artifacts
 __pycache__/
 *.py[cod]
+*$py.class
 *.so
 *.egg-info/
+*.egg
+build/
+dist/
+sdist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -10,11 +15,19 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Virtual envs
+# Environments
+.python-version
+.env
+.envrc
 .venv/
+env/
 venv/
 
-# Editors / OS
+# MacOS
 .DS_Store
+
+# Editors
 .idea/
 .vscode/
+.zed/
+!ui/.vscode/
