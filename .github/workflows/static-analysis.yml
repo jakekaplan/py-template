@@ -21,5 +21,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      - name: Run prek hooks (ruff + ty)
+      - name: Run prek hooks
         run: uv run prek run --all-files

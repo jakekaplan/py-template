@@ -29,4 +29,11 @@ uv run pytest
 
 1. Create a PyPI project with your package name.
 2. Configure **Trusted Publishing** for this GitHub repo in PyPI.
-3. Create a GitHub Release to trigger publishing.
+3. Push a version tag (for example `0.1.0`) to trigger publishing.
+
+## Versioning
+
+This template uses dynamic versioning via `hatch-vcs`.
+
+- Package version is derived from Git tags.
+- Use tags like `MAJOR.MINOR.PATCH` (no `v` prefix).
