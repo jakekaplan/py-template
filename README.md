@@ -16,7 +16,7 @@ A personal Python project template (Python 3.11+) using:
 Run once:
 
 ```bash
-uv run python scripts/bootstrap_template.py
+uv run scripts/bootstrap_template.py
 ```
 
 It will:
