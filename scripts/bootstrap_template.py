@@ -215,7 +215,11 @@ def delete_self() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Bootstrap a repository created from py-template")
-    parser.add_argument("package_name", nargs="?", help="Distribution package name (e.g. my-package)")
+    parser.add_argument(
+        "package_name",
+        nargs="?",
+        help="Distribution package name (e.g. my-package)",
+    )
     parser.add_argument("--import-name", help="Import package name (e.g. my_package)")
     parser.add_argument("--description", help="Package description")
     parser.add_argument("--author-name", help="Author name")
@@ -223,8 +227,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repository-url", help="Repository URL")
     parser.add_argument("--issues-url", help="Issues URL")
     parser.add_argument("--python-range", help="requires-python value")
-    parser.add_argument("--no-verify", action="store_true", help="Skip uv/prek/pytest verification")
-    parser.add_argument("--keep-script", action="store_true", help="Do not self-delete on success")
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip uv/prek/pytest verification",
+    )
+    parser.add_argument(
+        "--keep-script",
+        action="store_true",
+        help="Do not self-delete on success",
+    )
     return parser.parse_args()
 
 
@@ -310,4 +322,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         print(f"Bootstrap failed: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
