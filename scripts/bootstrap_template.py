@@ -15,6 +15,32 @@ SCRIPT_PATH = Path(__file__).resolve()
 DEFAULT_PYTHON_RANGE = ">=3.11"
 
 
+def git_remote_url() -> str | None:
+    """Infer GitHub HTTPS URL from git remote origin."""
+    result = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+
+    url = result.stdout.strip()
+
+    # git@github.com:owner/repo.git -> https://github.com/owner/repo
+    match = re.match(r"git@github\.com:(.+?)(?:\.git)?$", url)
+    if match:
+        return f"https://github.com/{match.group(1)}"
+
+    # https://github.com/owner/repo.git -> https://github.com/owner/repo
+    match = re.match(r"(https://github\.com/.+?)(?:\.git)?$", url)
+    if match:
+        return match.group(1)
+
+    return None
+
+
 @dataclass
 class BootstrapValues:
     dist_name: str
@@ -263,16 +289,20 @@ def collect_values(args: argparse.Namespace) -> BootstrapValues:
     default_description = args.description or defaults.get("description", "")
     default_python = args.python_range or defaults.get("requires-python", DEFAULT_PYTHON_RANGE)
 
+    repo_url = git_remote_url()
+    default_repo = args.repository_url or repo_url or ""
+    default_issues = args.issues_url or (f"{repo_url}/issues" if repo_url else "")
+
     interactive = sys.stdin.isatty()
 
     if interactive:
-        dist_name = prompt("Distribution name", default_name)
-        import_name = prompt("Import package name", default_import)
+        dist_name = prompt("Distribution name (e.g. my-package)", default_name)
+        import_name = prompt("Import name (e.g. my_package)", default_import)
         description = prompt("Description", default_description)
         author_name = prompt("Author name", args.author_name or "")
         author_email = prompt("Author email", args.author_email or "")
-        repository_url = prompt("Repository URL", args.repository_url or "")
-        issues_url = prompt("Issues URL", args.issues_url or "")
+        repository_url = prompt("Repository URL", default_repo)
+        issues_url = prompt("Issues URL", default_issues)
         python_range = prompt("Python range", default_python)
     else:
         dist_name = default_name
@@ -280,8 +310,8 @@ def collect_values(args: argparse.Namespace) -> BootstrapValues:
         description = default_description
         author_name = args.author_name or ""
         author_email = args.author_email or ""
-        repository_url = args.repository_url or ""
-        issues_url = args.issues_url or ""
+        repository_url = default_repo
+        issues_url = default_issues
         python_range = default_python
 
     return BootstrapValues(
