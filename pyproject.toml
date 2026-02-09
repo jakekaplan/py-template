@@ -7,7 +7,7 @@ name = "py-template"
 dynamic = ["version"]
 description = "Personal Python template with uv, ruff, ty, prek, and async pytest."
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = []
 
 [dependency-groups]
@@ -25,7 +25,7 @@ source = "vcs"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]

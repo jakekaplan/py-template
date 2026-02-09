@@ -1,6 +1,6 @@
 # py-template
 
-A personal Python project template using:
+A personal Python project template (Python 3.11+) using:
 
 - `uv` for dependency/env management
 - `ruff` for linting + formatting
@@ -13,18 +13,23 @@ A personal Python project template using:
 
 ## Using this template
 
-Replace `py-template` with your package name across the repo before doing anything else.
+Run once:
+
+```bash
+uv run python scripts/bootstrap_template.py
+```
+
+It will:
 
 1. Rename package identifiers everywhere:
    - distribution name: `py-template`
    - import/package name: `py_template` (including `src/` path and test imports)
-
 2. Update `pyproject.toml` metadata:
    - `name`, `description`, `authors`, `urls`, Python range
-
 3. Re-lock and verify:
    - `uv sync --group dev && uv lock`
    - `uv run prek run --all-files && uv run pytest`
+4. Delete itself on success
 
 ## Workflows
 
