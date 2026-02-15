@@ -29,7 +29,7 @@ It will:
 3. Re-lock and verify:
    - `uv sync --group dev && uv lock`
    - `uv run prek run --all-files && uv run pytest`
-4. Delete itself on success
+4. Delete bootstrap artifacts on success (script + bootstrap-only tests)
 
 ## Workflows
 
