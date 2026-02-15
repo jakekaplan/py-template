@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib.util
+import json
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -12,17 +15,32 @@ TEMPLATE_DIST_NAME = "py-template"
 TEMPLATE_IMPORT_NAME = "py_template"
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = Path(__file__).resolve()
+SCRIPT_DIR = SCRIPT_PATH.parent
+BOOTSTRAP_HELPER_PATH = SCRIPT_DIR / "bootstrap_template_helpers.py"
+helper_spec = importlib.util.spec_from_file_location(
+    "bootstrap_template_helpers", BOOTSTRAP_HELPER_PATH
+)
+if helper_spec is None or helper_spec.loader is None:
+    raise RuntimeError(f"Could not load helper module: {BOOTSTRAP_HELPER_PATH}")
+
+helper_module = importlib.util.module_from_spec(helper_spec)
+sys.modules[helper_spec.name] = helper_module
+helper_spec.loader.exec_module(helper_module)
+
+GitOrigin = helper_module.GitOrigin
+ensure_section = helper_module.ensure_section
+format_authors_line = helper_module.format_authors_line
+set_key_in_section = helper_module.set_key_in_section
+toml_quote = helper_module.toml_quote
+_git_config_value = helper_module.git_config_value
+_git_origin = helper_module.git_origin
+
 BOOTSTRAP_TEST_PATH = ROOT / "tests" / "test_bootstrap_template.py"
+STATE_PATH = ROOT / ".bootstrap-state.json"
+STATE_BACKUP_DIR = ROOT / ".bootstrap-state-backups"
 DEFAULT_PYTHON_RANGE = ">=3.11"
 DIST_NAME_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 IMPORT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-@dataclass
-class GitOrigin:
-    raw_url: str
-    repository_url: str | None
-    repo_name: str | None
 
 
 @dataclass
@@ -41,71 +59,15 @@ class BootstrapValues:
 class RollbackState:
     original_files: dict[Path, str] = field(default_factory=dict)
     renamed_dirs: list[tuple[Path, Path]] = field(default_factory=list)
+    backup_files: dict[Path, Path] = field(default_factory=dict)
 
 
 def git_origin() -> GitOrigin | None:
-    result = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        return None
-
-    raw_url = result.stdout.strip()
-    if not raw_url:
-        return None
-
-    repository_url = normalize_github_url(raw_url)
-    repo_name = repo_name_from_url(raw_url) or repo_name_from_url(repository_url)
-    return GitOrigin(raw_url=raw_url, repository_url=repository_url, repo_name=repo_name)
-
-
-def normalize_github_url(remote_url: str) -> str | None:
-    url = remote_url.strip().rstrip("/")
-
-    match = re.match(r"git@github\.com:(.+?)(?:\.git)?$", url)
-    if match:
-        return f"https://github.com/{match.group(1)}"
-
-    match = re.match(r"(https://github\.com/.+?)(?:\.git)?$", url)
-    if match:
-        return match.group(1)
-
-    return None
-
-
-def repo_name_from_url(url: str | None) -> str | None:
-    if not url:
-        return None
-
-    normalized = url.rstrip("/")
-    match = re.search(r"([^/:]+?)(?:\.git)?$", normalized)
-    if not match:
-        return None
-
-    repo_name = match.group(1)
-    return repo_name or None
+    return _git_origin(ROOT)
 
 
 def git_config_value(key: str) -> str | None:
-    result = subprocess.run(
-        ["git", "config", "--get", key],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        return None
-
-    value = result.stdout.strip()
-    return value or None
-
-
-def toml_quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    return _git_config_value(ROOT, key)
 
 
 def prompt(message: str, default: str = "") -> str:
@@ -133,11 +95,67 @@ def tracked_files() -> list[Path]:
 def should_skip_placeholder_file(path: Path) -> bool:
     return (
         path.resolve() == SCRIPT_PATH
+        or path.resolve() == BOOTSTRAP_HELPER_PATH
+        or path.resolve() == BOOTSTRAP_TEST_PATH
         or path.name == "uv.lock"
         or path.is_symlink()
         or not path.exists()
         or not path.is_file()
     )
+
+
+def checkpoint_payload(state: RollbackState) -> dict[str, list[dict[str, str]]]:
+    files = [
+        {
+            "path": str(path.relative_to(ROOT)),
+            "backup": str(backup_path.relative_to(ROOT)),
+        }
+        for path, backup_path in state.backup_files.items()
+    ]
+    renames = [
+        {"old": str(old.relative_to(ROOT)), "new": str(new.relative_to(ROOT))}
+        for old, new in state.renamed_dirs
+    ]
+    return {"files": files, "renames": renames}
+
+
+def write_checkpoint(state: RollbackState) -> None:
+    STATE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(checkpoint_payload(state), indent=2) + "\n", encoding="utf-8")
+
+
+def cleanup_checkpoint() -> None:
+    STATE_PATH.unlink(missing_ok=True)
+    shutil.rmtree(STATE_BACKUP_DIR, ignore_errors=True)
+
+
+def recover_from_checkpoint() -> None:
+    if not STATE_PATH.exists():
+        return
+
+    data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    renames = data.get("renames", [])
+    files = data.get("files", [])
+
+    for rename in reversed(renames):
+        old_dir = ROOT / rename["old"]
+        new_dir = ROOT / rename["new"]
+        if new_dir.exists() and not old_dir.exists():
+            new_dir.rename(old_dir)
+
+    restored = 0
+    for file_entry in files:
+        target_path = ROOT / file_entry["path"]
+        backup_path = ROOT / file_entry["backup"]
+        if not backup_path.exists():
+            continue
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
+        restored += 1
+
+    cleanup_checkpoint()
+    print(f"Recovered from interrupted bootstrap: restored {restored} files")
 
 
 def backup_text_file(path: Path, state: RollbackState) -> None:
@@ -146,7 +164,15 @@ def backup_text_file(path: Path, state: RollbackState) -> None:
     if not path.exists() or not path.is_file():
         return
 
-    state.original_files[path] = path.read_text(encoding="utf-8")
+    original = path.read_text(encoding="utf-8")
+    state.original_files[path] = original
+
+    backup_path = STATE_BACKUP_DIR / f"{len(state.backup_files):04d}.txt"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path.write_text(original, encoding="utf-8")
+    state.backup_files[path] = backup_path
+
+    write_checkpoint(state)
 
 
 def replace_placeholders(dist_name: str, import_name: str, state: RollbackState) -> None:
@@ -187,62 +213,8 @@ def rename_package_dir(import_name: str, state: RollbackState) -> None:
 
     old_dir.rename(new_dir)
     state.renamed_dirs.append((old_dir, new_dir))
+    write_checkpoint(state)
     print(f"Renamed package dir: {old_dir.relative_to(ROOT)} -> {new_dir.relative_to(ROOT)}")
-
-
-def section_span(text: str, section: str) -> tuple[int, int] | None:
-    pattern = re.compile(rf"(?ms)^\[{re.escape(section)}\]\n(.*?)(?=^\[|\Z)")
-    match = pattern.search(text)
-    if not match:
-        return None
-    return match.start(1), match.end(1)
-
-
-def set_key_in_section(text: str, section: str, key: str, line: str) -> str:
-    span = section_span(text, section)
-    if span is None:
-        raise RuntimeError(f"Missing section [{section}] in pyproject.toml")
-
-    start, end = span
-    body = text[start:end]
-    key_pattern = re.compile(rf"(?m)^{re.escape(key)}\s*=.*$")
-
-    if key_pattern.search(body):
-        body = key_pattern.sub(line, body, count=1)
-    else:
-        if body and not body.endswith("\n"):
-            body += "\n"
-        body += f"{line}\n"
-
-    return text[:start] + body + text[end:]
-
-
-def ensure_section(text: str, section: str, before_section: str | None = None) -> str:
-    if section_span(text, section) is not None:
-        return text
-
-    new_section = f"\n[{section}]\n"
-    if before_section:
-        anchor = re.search(rf"(?m)^\[{re.escape(before_section)}\]\n", text)
-        if anchor:
-            head = text[: anchor.start()].rstrip() + "\n"
-            tail = text[anchor.start() :]
-            return head + new_section + "\n" + tail
-
-    return text.rstrip() + new_section + "\n"
-
-
-def format_authors_line(author_name: str, author_email: str) -> str | None:
-    if not author_name and not author_email:
-        return None
-
-    parts: list[str] = []
-    if author_name:
-        parts.append(f"name = {toml_quote(author_name)}")
-    if author_email:
-        parts.append(f"email = {toml_quote(author_email)}")
-
-    return f"authors = [{{ {', '.join(parts)} }}]"
 
 
 def update_pyproject(values: BootstrapValues, state: RollbackState) -> None:
@@ -287,6 +259,7 @@ def verify() -> None:
     commands = [
         ["uv", "sync", "--group", "dev"],
         ["uv", "lock"],
+        ["uv", "run", "ruff", "format", "."],
         ["uv", "run", "prek", "run", "--all-files"],
         ["uv", "run", "pytest"],
     ]
@@ -296,6 +269,7 @@ def verify() -> None:
 
 def rollback_changes(state: RollbackState) -> None:
     if not state.original_files and not state.renamed_dirs:
+        cleanup_checkpoint()
         return
 
     for old_dir, new_dir in reversed(state.renamed_dirs):
@@ -308,6 +282,7 @@ def rollback_changes(state: RollbackState) -> None:
         path.write_text(original, encoding="utf-8")
         restored += 1
 
+    cleanup_checkpoint()
     print(
         f"Rollback complete: restored {restored} files, reverted {len(state.renamed_dirs)} renames"
     )
@@ -315,7 +290,7 @@ def rollback_changes(state: RollbackState) -> None:
 
 def delete_bootstrap_artifacts() -> None:
     deleted_paths: list[str] = []
-    for path in (SCRIPT_PATH, BOOTSTRAP_TEST_PATH):
+    for path in (SCRIPT_PATH, BOOTSTRAP_HELPER_PATH, BOOTSTRAP_TEST_PATH):
         if path.exists():
             deleted_paths.append(str(path.relative_to(ROOT)))
         path.unlink(missing_ok=True)
@@ -459,6 +434,8 @@ def collect_values(args: argparse.Namespace) -> BootstrapValues:
 
 
 def main() -> int:
+    recover_from_checkpoint()
+
     args = parse_args()
     values = collect_values(args)
 
@@ -483,7 +460,11 @@ def main() -> int:
     except BaseException:
         if not args.keep_changes_on_failure:
             rollback_changes(rollback_state)
+        else:
+            cleanup_checkpoint()
         raise
+
+    cleanup_checkpoint()
 
     if not args.keep_script:
         delete_bootstrap_artifacts()

@@ -299,18 +299,60 @@ def test_delete_bootstrap_artifacts(monkeypatch, tmp_path: Path) -> None:
     script_path.parent.mkdir(parents=True)
     script_path.write_text("script", encoding="utf-8")
 
+    helper_path = tmp_path / "scripts" / "bootstrap_template_helpers.py"
+    helper_path.write_text("helper", encoding="utf-8")
+
     test_path = tmp_path / "tests" / "test_bootstrap_template.py"
     test_path.parent.mkdir(parents=True)
     test_path.write_text("tests", encoding="utf-8")
 
     monkeypatch.setattr(bootstrap, "ROOT", tmp_path)
     monkeypatch.setattr(bootstrap, "SCRIPT_PATH", script_path)
+    monkeypatch.setattr(bootstrap, "BOOTSTRAP_HELPER_PATH", helper_path)
     monkeypatch.setattr(bootstrap, "BOOTSTRAP_TEST_PATH", test_path)
 
     bootstrap.delete_bootstrap_artifacts()
 
     assert not script_path.exists()
+    assert not helper_path.exists()
     assert not test_path.exists()
+
+
+def test_recover_from_checkpoint_restores_files_and_renames(monkeypatch, tmp_path: Path) -> None:
+    bootstrap = load_bootstrap_module()
+
+    target_file = tmp_path / "pyproject.toml"
+    target_file.write_text("changed", encoding="utf-8")
+
+    backup_dir = tmp_path / ".bootstrap-state-backups"
+    backup_dir.mkdir(parents=True)
+    backup_file = backup_dir / "0000.txt"
+    backup_file.write_text("original", encoding="utf-8")
+
+    old_dir = tmp_path / "src" / "py_template"
+    new_dir = tmp_path / "src" / "cool_tool"
+    new_dir.mkdir(parents=True)
+
+    state_path = tmp_path / ".bootstrap-state.json"
+    state_path.write_text(
+        "{\n"
+        '  "files": [{"path": "pyproject.toml", "backup": ".bootstrap-state-backups/0000.txt"}],\n'
+        '  "renames": [{"old": "src/py_template", "new": "src/cool_tool"}]\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(bootstrap, "ROOT", tmp_path)
+    monkeypatch.setattr(bootstrap, "STATE_PATH", state_path)
+    monkeypatch.setattr(bootstrap, "STATE_BACKUP_DIR", backup_dir)
+
+    bootstrap.recover_from_checkpoint()
+
+    assert target_file.read_text(encoding="utf-8") == "original"
+    assert old_dir.exists()
+    assert not new_dir.exists()
+    assert not state_path.exists()
+    assert not backup_dir.exists()
 
 
 def test_main_deletes_bootstrap_artifacts_on_success(monkeypatch) -> None:
